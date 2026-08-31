@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PID Control Lab</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0a0d12;
+    --panel:#10151c;
+    --panel-2:#141a22;
+    --border:#1e2733;
+    --text:#d7e0e8;
+    --muted:#6b7785;
+    --green:#39ff88;
+    --amber:#ffb020;
+    --cyan:#3ec9ff;
+    --red:#ff4d5e;
+    --font-display:'Space Grotesk', system-ui, sans-serif;
+    --font-mono:'JetBrains Mono', ui-monospace, SFMono-Regular, Consolas, monospace;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:
+      radial-gradient(ellipse 1200px 600px at 50% -10%, rgba(57,255,136,0.05), transparent),
+      var(--bg);
+    color:var(--text);
+    font-family:var(--font-display);
+    min-height:100vh;
+    padding:24px;
+  }
+  .wrap{max-width:1400px;margin:0 auto;}
+
+  header{
+    display:flex;align-items:center;justify-content:space-between;
+    margin-bottom:20px;padding-bottom:16px;
+    border-bottom:1px solid var(--border);
+  }
+  header h1{
+    font-size:22px;font-weight:700;letter-spacing:0.3px;margin:0;
+    display:flex;align-items:baseline;gap:10px;
+  }
+  header h1 span{
+    font-family:var(--font-mono);font-size:12px;font-weight:500;
+    color:var(--muted);letter-spacing:1.5px;text-transform:uppercase;
+  }
+  .status{
+    display:flex;align-items:center;gap:8px;
+    font-family:var(--font-mono);font-size:12px;color:var(--green);
+    letter-spacing:1px;text-transform:uppercase;
+  }
+  .dot{
+    width:8px;height:8px;border-radius:50%;background:var(--green);
+    box-shadow:0 0 8px var(--green);
+    animation:pulse 1.6s ease-in-out infinite;
+  }
+  @keyframes pulse{
+    0%,100%{opacity:1;} 50%{opacity:0.35;}
+  }
+
+  .grid{
+    display:grid;
+    grid-template-columns:170px 1fr 300px;
+    gap:16px;
+    align-items:stretch;
+  }
+  @media (max-width:1000px){
+    .grid{grid-template-columns:1fr;}
+  }
+
+  .panel{
+    background:var(--panel);
+    border:1px solid var(--border);
+    border-radius:10px;
+    padding:14px;
+  }
+  .panel-title{
+    font-family:var(--font-mono);font-size:11px;color:var(--muted);
+    text-transform:uppercase;letter-spacing:1.5px;margin-bottom:10px;
+  }
+
+  canvas{display:block;width:100%;background:var(--panel-2);border-radius:6px;}
+
+  /* --- Telemetry --- */
+  .telemetry-grid{
+    display:grid;grid-template-columns:1fr;gap:0;
+    font-family:var(--font-mono);
+  }
+  .tel-row{
+    display:flex;justify-content:space-between;align-items:baseline;
+    padding:7px 2px;border-bottom:1px dashed var(--border);
+    font-size:12.5px;
+  }
+  .tel-row:last-child{border-bottom:none;}
+  .tel-label{color:var(--muted);letter-spacing:0.5px;}
+  .tel-value{color:var(--text);font-weight:600;}
+  .tel-value.pos{color:var(--green);}
+  .tel-value.err{color:var(--amber);}
+  .tel-value.out{color:var(--cyan);}
+
+  /* --- Controls --- */
+  .controls-panel{margin-top:16px;}
+  .ctrl-groups{
+    display:grid;grid-template-columns:repeat(3, 1fr);gap:14px;
+  }
+  @media (max-width:900px){.ctrl-groups{grid-template-columns:1fr;}}
+  .ctrl-group h3{
+    font-family:var(--font-mono);font-size:11px;color:var(--muted);
+    text-transform:uppercase;letter-spacing:1.5px;
+    margin:0 0 10px 0;padding-bottom:6px;border-bottom:1px solid var(--border);
+  }
+  .field{margin-bottom:10px;}
+  .field label{
+    display:flex;justify-content:space-between;align-items:center;
+    font-size:12.5px;color:var(--text);margin-bottom:4px;
+  }
+  .field label .val{
+    font-family:var(--font-mono);color:var(--amber);font-size:12px;
+  }
+  input[type="range"]{
+    -webkit-appearance:none;width:100%;height:4px;border-radius:2px;
+    background:var(--border);outline:none;
+  }
+  input[type="range"]::-webkit-slider-thumb{
+    -webkit-appearance:none;width:14px;height:14px;border-radius:50%;
+    background:var(--green);cursor:pointer;
+    box-shadow:0 0 6px rgba(57,255,136,0.6);
+    border:2px solid #0a0d12;
+  }
+  input[type="range"]::-moz-range-thumb{
+    width:14px;height:14px;border-radius:50%;background:var(--green);
+    cursor:pointer;border:2px solid #0a0d12;
+  }
+  input[type="number"]{
+    width:100%;background:var(--panel-2);border:1px solid var(--border);
+    color:var(--text);font-family:var(--font-mono);font-size:12.5px;
+    padding:6px 8px;border-radius:5px;outline:none;
+  }
+  input[type="number"]:focus{border-color:var(--green);}
+
+  button{
+    width:100%;margin-top:14px;padding:11px;cursor:pointer;
+    background:transparent;color:var(--green);
+    border:1px solid var(--green);border-radius:6px;
+    font-family:var(--font-mono);font-size:12px;letter-spacing:1px;
+    text-transform:uppercase;font-weight:600;
+    transition:background 0.15s, color 0.15s;
+  }
+  button:hover{background:var(--green);color:#04120a;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>PID Control Lab <span>simulador de lazo cerrado</span></h1>
+    <div class="status"><span class="dot"></span> live</div>
+  </header>
+
+  <div class="grid">
+
+    <!-- RIG: physical visualization -->
+    <div class="panel">
+      <div class="panel-title">Rig</div>
+      <canvas id="rigCanvas" width="140" height="420"></canvas>
+    </div>
+
+    <!-- SCOPE: real-time chart -->
+    <div class="panel">
+      <div class="panel-title">Osciloscopio &mdash; posición / target / salida</div>
+      <canvas id="scopeCanvas" width="760" height="330"></canvas>
+      <div style="display:flex;gap:18px;margin-top:8px;font-family:var(--font-mono);font-size:11px;color:var(--muted);">
+        <span><span style="color:var(--green);">■</span> posición</span>
+        <span><span style="color:var(--amber);">■</span> target</span>
+        <span><span style="color:var(--cyan);">■</span> salida PID</span>
+      </div>
+      <canvas id="scopeCanvas2" width="760" height="90" style="margin-top:10px;"></canvas>
+    </div>
+
+    <!-- TELEMETRY -->
+    <div class="panel">
+      <div class="panel-title">Telemetría</div>
+      <div class="telemetry-grid" id="telemetry"></div>
+    </div>
+
+  </div>
+
+  <!-- CONTROLS -->
+  <div class="panel controls-panel">
+    <div class="panel-title">Controles</div>
+    <div class="ctrl-groups">
+
+      <div class="ctrl-group">
+        <h3>Ganancias PID</h3>
+        <div class="field"><label>Target <span class="val" id="v_target">0</span></label>
+          <input type="range" id="target" min="-280" max="280" value="0"></div>
+        <div class="field"><label>Kp <span class="val" id="v_kp">1.0</span></label>
+          <input type="range" id="kp" min="0" max="5" step="0.01" value="1.0"></div>
+        <div class="field"><label>Ki <span class="val" id="v_ki">0.0</span></label>
+          <input type="range" id="ki" min="0" max="2" step="0.01" value="0.0"></div>
+        <div class="field"><label>Kd <span class="val" id="v_kd">0.5</span></label>
+          <input type="range" id="kd" min="0" max="3" step="0.01" value="0.5"></div>
+        <div class="field"><label>Filtro derivativo <span class="val" id="v_kdf">0.10</span></label>
+          <input type="range" id="k_deriv_filter" min="0.01" max="1" step="0.01" value="0.1"></div>
+      </div>
+
+      <div class="ctrl-group">
+        <h3>Física del sistema</h3>
+        <div class="field"><label>Gravedad <span class="val" id="v_gravity">9.8</span></label>
+          <input type="range" id="gravity" min="0" max="30" step="0.1" value="9.8"></div>
+        <div class="field"><label>Masa <span class="val" id="v_mass">1.0</span></label>
+          <input type="range" id="mass" min="0.2" max="5" step="0.1" value="1.0"></div>
+      </div>
+
+      <div class="ctrl-group">
+        <h3>Límites de salida</h3>
+        <div class="field"><label>Out max <span class="val" id="v_outmax">100</span></label>
+          <input type="range" id="out_max" min="10" max="300" step="1" value="100"></div>
+        <div class="field"><label>Out min <span class="val" id="v_outmin">-100</span></label>
+          <input type="range" id="out_min" min="-300" max="-10" step="1" value="-100"></div>
+        <div class="field"><label>Deadband <span class="val" id="v_deadband">1</span></label>
+          <input type="range" id="deadband" min="0" max="30" step="1" value="1"></div>
+      </div>
+
+    </div>
+    <button onclick="resetSim()">Reiniciar experimento</button>
+  </div>
+
+</div>
+
+<script>
+const rigCanvas = document.getElementById('rigCanvas');
+const rigCtx = rigCanvas.getContext('2d');
+const scopeCanvas = document.getElementById('scopeCanvas');
+const scopeCtx = scopeCanvas.getContext('2d');
+const scope2Canvas = document.getElementById('scopeCanvas2');
+const scope2Ctx = scope2Canvas.getContext('2d');
+
+const css = getComputedStyle(document.documentElement);
+const COLOR = {
+  green: css.getPropertyValue('--green').trim(),
+  amber: css.getPropertyValue('--amber').trim(),
+  cyan: css.getPropertyValue('--cyan').trim(),
+  red: css.getPropertyValue('--red').trim(),
+  border: css.getPropertyValue('--border').trim(),
+  muted: css.getPropertyValue('--muted').trim(),
+};
+
+// ---- Estado físico (100% client-side) ----
+// Convención: arriba = positivo, abajo = negativo (0 = centro del riel).
+const RANGE = 280; // límites físicos del riel: -RANGE (piso) a +RANGE (techo)
+let position = -200; // arranca abajo, cerca del piso
+let velocity = 0;
+let lastTime = performance.now();
+let lastOutput = 0;
+let fps = 0;
+
+// Convierte un valor físico (-RANGE..RANGE, positivo = arriba) a coordenada
+// de píxel Y en un canvas de altura dada (Y de canvas crece hacia abajo,
+// asi que +RANGE debe mapear cerca del margen superior).
+function physToPixelY(value, canvasHeight, margin = 12){
+  const usable = canvasHeight - margin * 2;
+  const t = (value + RANGE) / (2 * RANGE); // 0 en -RANGE, 1 en +RANGE
+  return canvasHeight - margin - t * usable;
+}
+
+// ---- Historial para el osciloscopio ----
+const HISTORY_SECONDS = 8;
+let history = []; // {t, position, target, output}
+let t0 = performance.now();
+
+const els = {
+  target: document.getElementById('target'),
+  kp: document.getElementById('kp'),
+  ki: document.getElementById('ki'),
+  kd: document.getElementById('kd'),
+  k_deriv_filter: document.getElementById('k_deriv_filter'),
+  out_max: document.getElementById('out_max'),
+  out_min: document.getElementById('out_min'),
+  deadband: document.getElementById('deadband'),
+  gravity: document.getElementById('gravity'),
+  mass: document.getElementById('mass'),
+};
+
+function refreshLabels(){
+  document.getElementById('v_target').textContent = els.target.value;
+  document.getElementById('v_kp').textContent = parseFloat(els.kp.value).toFixed(2);
+  document.getElementById('v_ki').textContent = parseFloat(els.ki.value).toFixed(2);
+  document.getElementById('v_kd').textContent = parseFloat(els.kd.value).toFixed(2);
+  document.getElementById('v_kdf').textContent = parseFloat(els.k_deriv_filter.value).toFixed(2);
+  document.getElementById('v_gravity').textContent = parseFloat(els.gravity.value).toFixed(1);
+  document.getElementById('v_mass').textContent = parseFloat(els.mass.value).toFixed(1);
+  document.getElementById('v_outmax').textContent = els.out_max.value;
+  document.getElementById('v_outmin').textContent = els.out_min.value;
+  document.getElementById('v_deadband').textContent = els.deadband.value;
+}
+
+let pendingSend = false;
+async function updateBackend(){
+  if (pendingSend) return;
+  pendingSend = true;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 3000);
+  try {
+    await fetch('/update', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      signal: controller.signal,
+      body: JSON.stringify({
+        kp: els.kp.value, ki: els.ki.value, kd: els.kd.value,
+        k_deriv_filter: els.k_deriv_filter.value,
+        target: els.target.value,
+        out_max: els.out_max.value, out_min: els.out_min.value,
+        deadband: els.deadband.value,
+      })
+    });
+  } catch (err) {
+    console.warn('No se pudo actualizar parámetros:', err);
+  } finally {
+    clearTimeout(timeout);
+    pendingSend = false;
+  }
+}
+
+async function resetSim(){
+  position = -200;
+  velocity = 0;
+  history = [];
+  t0 = performance.now();
+  await fetch('/update', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      kp: els.kp.value, ki: els.ki.value, kd: els.kd.value,
+      k_deriv_filter: els.k_deriv_filter.value,
+      target: els.target.value,
+      out_max: els.out_max.value, out_min: els.out_min.value,
+      deadband: els.deadband.value,
+      reset: true
+    })
+  });
+}
+
+document.querySelectorAll('input[type="range"]').forEach(input => {
+  input.addEventListener('input', () => {
+    refreshLabels();
+    if (['gravity','mass'].includes(input.id)) return; // puramente client-side
+    updateBackend();
+  });
+});
+
+function renderTelemetry(d, dtMs){
+  const rows = [
+    ['Kp', d.kp?.toFixed(3)],
+    ['Ki', d.ki?.toFixed(3)],
+    ['Kd', d.kd?.toFixed(3)],
+    ['Filtro derivativo', d.k_deriv_filter?.toFixed(3)],
+    ['Target', d.target, 'pos'],
+    ['Posición', Math.round(position), 'pos'],
+    ['Error', d.error, 'err'],
+    ['Deadband', d.deadband],
+    ['Suma integral', d.integral_sum?.toFixed(2)],
+    ['Derivada', d.derivative?.toFixed(2)],
+    ['Salida PID', d.output?.toFixed(2), 'out'],
+    ['Out max / min', `${d.out_max} / ${d.out_min}`],
+    ['dt', `${dtMs.toFixed(1)} ms`],
+    ['FPS', fps.toFixed(0)],
+  ];
+  document.getElementById('telemetry').innerHTML = rows.map(([label, value, cls]) =>
+    `<div class="tel-row"><span class="tel-label">${label}</span><span class="tel-value ${cls||''}">${value}</span></div>`
+  ).join('');
+}
+
+function drawRig(target){
+  const w = rigCanvas.width, h = rigCanvas.height;
+  rigCtx.clearRect(0,0,w,h);
+
+  const railX = w/2;
+  const blockY = physToPixelY(position, h);
+  const targetY = physToPixelY(target, h);
+
+  // Rail
+  rigCtx.strokeStyle = COLOR.border;
+  rigCtx.lineWidth = 2;
+  rigCtx.beginPath();
+  rigCtx.moveTo(railX, 10);
+  rigCtx.lineTo(railX, h-10);
+  rigCtx.stroke();
+
+  // Piso (referencia 0 = centro, extremos = límites físicos)
+  rigCtx.fillStyle = COLOR.muted;
+  rigCtx.font = '9px var(--font-mono)';
+
+  // Target marker
+  rigCtx.strokeStyle = COLOR.amber;
+  rigCtx.setLineDash([4,4]);
+  rigCtx.beginPath();
+  rigCtx.moveTo(10, targetY);
+  rigCtx.lineTo(w-10, targetY);
+  rigCtx.stroke();
+  rigCtx.setLineDash([]);
+
+  // Mass (block)
+  const blockH = 22, blockW = 60;
+  rigCtx.fillStyle = COLOR.green;
+  rigCtx.shadowColor = COLOR.green;
+  rigCtx.shadowBlur = 10;
+  rigCtx.fillRect(railX-blockW/2, blockY-blockH/2, blockW, blockH);
+  rigCtx.shadowBlur = 0;
+
+  // Force arrow (proportional to last output). Positivo = empuja hacia
+  // arriba (pixel Y menor), igual que la convención física.
+  const arrowLen = Math.max(-40, Math.min(40, lastOutput * 0.4));
+  const tipY = blockY - arrowLen;
+  rigCtx.strokeStyle = COLOR.cyan;
+  rigCtx.lineWidth = 2;
+  rigCtx.beginPath();
+  rigCtx.moveTo(railX+40, blockY);
+  rigCtx.lineTo(railX+40, tipY);
+  rigCtx.stroke();
+  rigCtx.fillStyle = COLOR.cyan;
+  rigCtx.beginPath();
+  const dir = arrowLen >= 0 ? -1 : 1;
+  rigCtx.moveTo(railX+40, tipY);
+  rigCtx.lineTo(railX+35, tipY - dir*6);
+  rigCtx.lineTo(railX+45, tipY - dir*6);
+  rigCtx.closePath();
+  rigCtx.fill();
+}
+
+function drawGrid(ctx, w, h, rows, cols){
+  ctx.strokeStyle = COLOR.border;
+  ctx.lineWidth = 1;
+  for(let i=0;i<=cols;i++){
+    const x = (w/cols)*i;
+    ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,h); ctx.stroke();
+  }
+  for(let i=0;i<=rows;i++){
+    const y = (h/rows)*i;
+    ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke();
+  }
+}
+
+function drawScope(){
+  const w = scopeCanvas.width, h = scopeCanvas.height;
+  scopeCtx.clearRect(0,0,w,h);
+  drawGrid(scopeCtx, w, h, 6, 10);
+  if (history.length < 2) return;
+
+  const tNow = history[history.length-1].t;
+  const tMin = tNow - HISTORY_SECONDS;
+
+  function xOf(t){ return ((t - tMin) / HISTORY_SECONDS) * w; }
+  function yOf(v){ return physToPixelY(v, h); }
+
+  function plot(key, color, glow){
+    scopeCtx.strokeStyle = color;
+    scopeCtx.lineWidth = 2;
+    if (glow){ scopeCtx.shadowColor = color; scopeCtx.shadowBlur = 6; }
+    scopeCtx.beginPath();
+    let started = false;
+    for(const p of history){
+      if (p.t < tMin) continue;
+      const x = xOf(p.t), y = yOf(p[key]);
+      if (!started){ scopeCtx.moveTo(x,y); started = true; } else { scopeCtx.lineTo(x,y); }
+    }
+    scopeCtx.stroke();
+    scopeCtx.shadowBlur = 0;
+  }
+
+  plot('target', COLOR.amber, false);
+  plot('position', COLOR.green, true);
+
+  // secondary strip: output
+  scope2Ctx.clearRect(0,0,w,scope2Canvas.height);
+  drawGrid(scope2Ctx, w, scope2Canvas.height, 2, 10);
+  scope2Ctx.strokeStyle = COLOR.cyan;
+  scope2Ctx.lineWidth = 2;
+  scope2Ctx.shadowColor = COLOR.cyan;
+  scope2Ctx.shadowBlur = 6;
+  scope2Ctx.beginPath();
+  let started = false;
+  const hh = scope2Canvas.height;
+  for(const p of history){
+    if (p.t < tMin) continue;
+    const x = xOf(p.t);
+    const y = hh/2 - (p.output / 100) * (hh/2 - 6);
+    if (!started){ scope2Ctx.moveTo(x,y); started = true; } else { scope2Ctx.lineTo(x,y); }
+  }
+  scope2Ctx.stroke();
+  scope2Ctx.shadowBlur = 0;
+}
+
+async function loop(){
+  try {
+    const now = performance.now();
+    let dt = (now - lastTime) / 1000.0;
+    lastTime = now;
+    fps = dt > 0 ? (1/dt) : fps;
+    dt = Math.min(Math.max(dt, 0), 0.1); // evita saltos si la pestaña estuvo en pausa
+
+    const response = await fetch('/compute', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ position: Math.round(position), dt })
+    });
+    if (!response.ok) throw new Error('compute failed: ' + response.status);
+    const d = await response.json();
+
+    // Defensa: si por lo que sea llega un valor no finito, lo ignoramos
+    // esta vuelta en lugar de dejar que corrompa la física.
+    if (!Number.isFinite(d.output)) throw new Error('salida no finita: ' + d.output);
+    lastOutput = d.output;
+
+    // Física: F = m*a. Convención: arriba = positivo, abajo = negativo.
+    // La salida del PID empuja en esa misma dirección (positivo = sube),
+    // y la gravedad siempre resta (tira hacia abajo).
+    const gravity = parseFloat(els.gravity.value);
+    const mass = parseFloat(els.mass.value);
+    const totalAcceleration = (d.output / mass) - gravity;
+
+    velocity += totalAcceleration * dt;
+    position += velocity * dt;
+
+    if (!Number.isFinite(position)) position = 0; // ultimo recurso
+    if (!Number.isFinite(velocity)) velocity = 0;
+
+    if (position > RANGE) { position = RANGE; velocity = 0; }
+    if (position < -RANGE) { position = -RANGE; velocity = 0; }
+
+    history.push({ t: (now - t0)/1000, position, target: d.target, output: d.output });
+    const cutoff = (now - t0)/1000 - HISTORY_SECONDS - 1;
+    while (history.length && history[0].t < cutoff) history.shift();
+
+    drawRig(d.target);
+    drawScope();
+    renderTelemetry(d, dt*1000);
+  } catch (err) {
+    // No dejamos que un frame fallido mate la animación: lo logueamos
+    // y seguimos con el siguiente frame.
+    console.warn('Frame omitido:', err);
+  } finally {
+    requestAnimationFrame(loop);
+  }
+}
+
+refreshLabels();
+updateBackend().then(() => {
+  lastTime = performance.now();
+  t0 = performance.now();
+  loop();
+}).catch(err => {
+  console.error('No se pudo inicializar, arrancando igual:', err);
+  lastTime = performance.now();
+  t0 = performance.now();
+  loop();
+});
+</script>
+</body>
+</html>
