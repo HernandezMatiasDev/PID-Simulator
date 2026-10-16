@@ -176,6 +176,7 @@
         <span><span style="color:var(--green);">■</span> posición</span>
         <span><span style="color:var(--amber);">■</span> target</span>
         <span><span style="color:var(--cyan);">■</span> salida PID</span>
+        <span style="margin-left:auto;">ventana 20 s · 1 cuadro = 2 s</span>
       </div>
       <canvas id="scopeCanvas2" width="760" height="90" style="margin-top:10px;"></canvas>
     </div>
@@ -197,12 +198,12 @@
         <h3>Ganancias PID</h3>
         <div class="field"><label>Target <span class="val" id="v_target">0</span></label>
           <input type="range" id="target" min="-280" max="280" value="0"></div>
-        <div class="field"><label>Kp <span class="val" id="v_kp">1.0</span></label>
-          <input type="range" id="kp" min="0" max="5" step="0.01" value="1.0"></div>
+        <div class="field"><label>Kp <span class="val" id="v_kp">1.2</span></label>
+          <input type="range" id="kp" min="0" max="5" step="0.01" value="1.2"></div>
         <div class="field"><label>Ki <span class="val" id="v_ki">0.0</span></label>
           <input type="range" id="ki" min="0" max="2" step="0.01" value="0.0"></div>
-        <div class="field"><label>Kd <span class="val" id="v_kd">0.5</span></label>
-          <input type="range" id="kd" min="0" max="3" step="0.01" value="0.5"></div>
+        <div class="field"><label>Kd <span class="val" id="v_kd">0.0</span></label>
+          <input type="range" id="kd" min="0" max="3" step="0.01" value="0.0"></div>
         <div class="field"><label>Filtro derivativo <span class="val" id="v_kdf">0.10</span></label>
           <input type="range" id="k_deriv_filter" min="0.01" max="1" step="0.01" value="0.1"></div>
       </div>
@@ -211,18 +212,22 @@
         <h3>Física del sistema</h3>
         <div class="field"><label>Gravedad <span class="val" id="v_gravity">9.8</span></label>
           <input type="range" id="gravity" min="0" max="30" step="0.1" value="9.8"></div>
-        <div class="field"><label>Masa <span class="val" id="v_mass">1.0</span></label>
+        <div class="field"><label>Masa (carga del dron) <span class="val" id="v_mass">1.0</span></label>
           <input type="range" id="mass" min="0.2" max="5" step="0.1" value="1.0"></div>
+        <div class="field"><label>Resistencia del aire <span class="val" id="v_damping">0.5</span></label>
+          <input type="range" id="damping" min="0" max="5" step="0.1" value="0.5"></div>
+        <div class="field"><label>Viento vertical (+ sube / − baja) <span class="val" id="v_wind">0</span></label>
+          <input type="range" id="wind" min="-60" max="60" step="1" value="0"></div>
       </div>
 
       <div class="ctrl-group">
         <h3>Límites de salida</h3>
-        <div class="field"><label>Out max <span class="val" id="v_outmax">100</span></label>
-          <input type="range" id="out_max" min="10" max="300" step="1" value="100"></div>
-        <div class="field"><label>Out min <span class="val" id="v_outmin">-100</span></label>
-          <input type="range" id="out_min" min="-300" max="-10" step="1" value="-100"></div>
-        <div class="field"><label>Deadband <span class="val" id="v_deadband">1</span></label>
-          <input type="range" id="deadband" min="0" max="30" step="1" value="1"></div>
+        <div class="field"><label>Out max <span class="val" id="v_outmax">300</span></label>
+          <input type="range" id="out_max" min="10" max="300" step="1" value="300"></div>
+        <div class="field"><label>Out min <span class="val" id="v_outmin">-300</span></label>
+          <input type="range" id="out_min" min="-300" max="-10" step="1" value="-300"></div>
+        <div class="field"><label>Deadband <span class="val" id="v_deadband">0</span></label>
+          <input type="range" id="deadband" min="0" max="30" step="1" value="0"></div>
       </div>
 
     </div>
@@ -252,10 +257,29 @@ const COLOR = {
 // ---- Estado físico (100% client-side) ----
 // Convención: arriba = positivo, abajo = negativo (0 = centro del riel).
 const RANGE = 280; // límites físicos del riel: -RANGE (piso) a +RANGE (techo)
-let position = -200; // arranca abajo, cerca del piso
+const START_POSITION = -100; // el dron arranca 100 unidades por debajo del target (= escalon de "1.0" del informe)
+let position = START_POSITION;
 let velocity = 0;
 let lastTime = performance.now();
 let lastOutput = 0;
+let lastLimit = 300;
+
+// ---- Modelo fisico (dron / masa que sube y baja) ----
+//   m * x'' = u(PID) - peso - c * x' + viento
+//   peso = m * g * WEIGHT_K     (WEIGHT_K solo escala unidades: 1 kg * 9.8 -> ~29 unidades de empuje)
+// Con "solo P" el dron se queda por debajo del target: error = peso / Kp (error estacionario).
+// El termino I acumula error hasta que la salida iguala el peso -> error 0.
+// El aire (c) y el termino D son los que amortiguan las oscilaciones.
+const PHYS = { WEIGHT_K: 3.0, MAX_SUBSTEP: 0.005 };
+
+// ---- Punto fijo hacia el PID en C ----
+// pid.c trabaja con posicion/target/error como int32, o sea de a 1 unidad entera.
+// Eso mete ruido de cuantizacion que el termino D amplifica muchisimo.
+// Solucion: mandamos posicion y target multiplicados por FIX (resolucion 0.01) y
+// dividimos las ganancias por FIX, asi la salida del PID es identica a la teorica.
+// Todo lo que vuelve del backend se "des-escala" en fromBackend().
+const FIX = 100;
+const KI_SCALE = 0.3;
 let fps = 0;
 
 // Convierte un valor físico (-RANGE..RANGE, positivo = arriba) a coordenada
@@ -268,7 +292,7 @@ function physToPixelY(value, canvasHeight, margin = 12){
 }
 
 // ---- Historial para el osciloscopio ----
-const HISTORY_SECONDS = 8;
+const HISTORY_SECONDS = 20;
 let history = []; // {t, position, target, output}
 let t0 = performance.now();
 
@@ -283,6 +307,8 @@ const els = {
   deadband: document.getElementById('deadband'),
   gravity: document.getElementById('gravity'),
   mass: document.getElementById('mass'),
+  damping: document.getElementById('damping'),
+  wind: document.getElementById('wind'),
 };
 
 function refreshLabels(){
@@ -293,61 +319,93 @@ function refreshLabels(){
   document.getElementById('v_kdf').textContent = parseFloat(els.k_deriv_filter.value).toFixed(2);
   document.getElementById('v_gravity').textContent = parseFloat(els.gravity.value).toFixed(1);
   document.getElementById('v_mass').textContent = parseFloat(els.mass.value).toFixed(1);
+  document.getElementById('v_damping').textContent = parseFloat(els.damping.value).toFixed(1);
+  document.getElementById('v_wind').textContent = els.wind.value;
   document.getElementById('v_outmax').textContent = els.out_max.value;
   document.getElementById('v_outmin').textContent = els.out_min.value;
   document.getElementById('v_deadband').textContent = els.deadband.value;
 }
 
-let pendingSend = false;
+// Parametros que se mandan al backend (en unidades de punto fijo, ver FIX)
+function buildParams(extra = {}){
+  return {
+    kp: parseFloat(els.kp.value) / FIX,
+    ki: parseFloat(els.ki.value) * KI_SCALE / FIX,
+    kd: parseFloat(els.kd.value) / FIX,
+    k_deriv_filter: parseFloat(els.k_deriv_filter.value),
+    target: Math.round(parseFloat(els.target.value) * FIX),
+    out_max: parseFloat(els.out_max.value),
+    out_min: parseFloat(els.out_min.value),
+    deadband: Math.round(parseFloat(els.deadband.value) * FIX),
+    ...extra,
+  };
+}
+
+// Lo que devuelve el backend viene en punto fijo: lo pasamos a unidades normales.
+function fromBackend(d){
+  return {
+    ...d,
+    kp: d.kp * FIX, ki: (d.ki/KI_SCALE) * FIX, kd: d.kd * FIX,
+    target: d.target / FIX,
+    error: d.error / FIX,
+    deadband: d.deadband / FIX,
+    integral_sum: d.integral_sum / FIX,
+    derivative: d.derivative / FIX,
+  };
+}
+
+// Si el usuario mueve un slider mientras hay un envio en curso, antes se perdia
+// ese valor. Ahora se marca "dirty" y se reenvia el ultimo estado al terminar.
+let sending = false;
+let dirty = false;
 async function updateBackend(){
-  if (pendingSend) return;
-  pendingSend = true;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 3000);
+  if (sending){ dirty = true; return; }
+  sending = true;
   try {
-    await fetch('/update', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      signal: controller.signal,
-      body: JSON.stringify({
-        kp: els.kp.value, ki: els.ki.value, kd: els.kd.value,
-        k_deriv_filter: els.k_deriv_filter.value,
-        target: els.target.value,
-        out_max: els.out_max.value, out_min: els.out_min.value,
-        deadband: els.deadband.value,
-      })
-    });
-  } catch (err) {
-    console.warn('No se pudo actualizar parámetros:', err);
+    do {
+      dirty = false;
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 3000);
+      try {
+        await fetch('/update', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          signal: controller.signal,
+          body: JSON.stringify(buildParams())
+        });
+      } catch (err) {
+        console.warn('No se pudo actualizar parámetros:', err);
+      } finally {
+        clearTimeout(timeout);
+      }
+    } while (dirty);
   } finally {
-    clearTimeout(timeout);
-    pendingSend = false;
+    sending = false;
   }
 }
 
 async function resetSim(){
-  position = -200;
+  position = START_POSITION;
   velocity = 0;
+  lastOutput = 0;
   history = [];
   t0 = performance.now();
-  await fetch('/update', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({
-      kp: els.kp.value, ki: els.ki.value, kd: els.kd.value,
-      k_deriv_filter: els.k_deriv_filter.value,
-      target: els.target.value,
-      out_max: els.out_max.value, out_min: els.out_min.value,
-      deadband: els.deadband.value,
-      reset: true
-    })
-  });
+  try {
+    await fetch('/update', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(buildParams({ reset: true }))
+    });
+  } catch (err) {
+    console.warn('No se pudo reiniciar:', err);
+  }
+  lastTime = performance.now();
 }
 
 document.querySelectorAll('input[type="range"]').forEach(input => {
   input.addEventListener('input', () => {
     refreshLabels();
-    if (['gravity','mass'].includes(input.id)) return; // puramente client-side
+    if (['gravity','mass','damping','wind'].includes(input.id)) return; // puramente client-side (física)
     updateBackend();
   });
 });
@@ -359,12 +417,14 @@ function renderTelemetry(d, dtMs){
     ['Kd', d.kd?.toFixed(3)],
     ['Filtro derivativo', d.k_deriv_filter?.toFixed(3)],
     ['Target', d.target, 'pos'],
-    ['Posición', Math.round(position), 'pos'],
-    ['Error', d.error, 'err'],
+    ['Posición', position.toFixed(1), 'pos'],
+    ['Velocidad', velocity.toFixed(1)],
+    ['Error', d.error?.toFixed(2), 'err'],
     ['Deadband', d.deadband],
     ['Suma integral', d.integral_sum?.toFixed(2)],
     ['Derivada', d.derivative?.toFixed(2)],
     ['Salida PID', d.output?.toFixed(2), 'out'],
+    ['Peso (m·g)', (parseFloat(els.mass.value) * parseFloat(els.gravity.value) * PHYS.WEIGHT_K).toFixed(1)],
     ['Out max / min', `${d.out_max} / ${d.out_min}`],
     ['dt', `${dtMs.toFixed(1)} ms`],
     ['FPS', fps.toFixed(0)],
@@ -413,7 +473,7 @@ function drawRig(target){
 
   // Force arrow (proportional to last output). Positivo = empuja hacia
   // arriba (pixel Y menor), igual que la convención física.
-  const arrowLen = Math.max(-40, Math.min(40, lastOutput * 0.4));
+  const arrowLen = Math.max(-40, Math.min(40, (lastOutput / lastLimit) * 40));
   const tipY = blockY - arrowLen;
   rigCtx.strokeStyle = COLOR.cyan;
   rigCtx.lineWidth = 2;
@@ -487,7 +547,7 @@ function drawScope(){
   for(const p of history){
     if (p.t < tMin) continue;
     const x = xOf(p.t);
-    const y = hh/2 - (p.output / 100) * (hh/2 - 6);
+    const y = hh/2 - (p.output / p.lim) * (hh/2 - 6);
     if (!started){ scope2Ctx.moveTo(x,y); started = true; } else { scope2Ctx.lineTo(x,y); }
   }
   scope2Ctx.stroke();
@@ -505,33 +565,44 @@ async function loop(){
     const response = await fetch('/compute', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ position: Math.round(position), dt })
+      body: JSON.stringify({ position: Math.round(position * FIX), dt })
     });
     if (!response.ok) throw new Error('compute failed: ' + response.status);
-    const d = await response.json();
+    const d = fromBackend(await response.json());
 
     // Defensa: si por lo que sea llega un valor no finito, lo ignoramos
     // esta vuelta en lugar de dejar que corrompa la física.
     if (!Number.isFinite(d.output)) throw new Error('salida no finita: ' + d.output);
     lastOutput = d.output;
+    lastLimit = Math.max(Math.abs(d.out_max), Math.abs(d.out_min), 1);
 
-    // Física: F = m*a. Convención: arriba = positivo, abajo = negativo.
-    // La salida del PID empuja en esa misma dirección (positivo = sube),
-    // y la gravedad siempre resta (tira hacia abajo).
+    // Física: m·x'' = empuje(PID) − peso − c·x' + viento
+    // Convención: arriba = positivo. El empuje del PID es la "fuerza" que se aplica,
+    // el peso siempre tira hacia abajo y el aire frena proporcionalmente a la velocidad.
+    // Se integra en sub-pasos chicos (Euler semi-implícito) para que sea estable
+    // aunque el dt del frame cambie.
     const gravity = parseFloat(els.gravity.value);
-    const mass = parseFloat(els.mass.value);
-    const totalAcceleration = (d.output / mass) - gravity;
+    const mass    = parseFloat(els.mass.value);
+    const drag    = parseFloat(els.damping.value);
+    const wind    = parseFloat(els.wind.value);
+    const weight  = mass * gravity * PHYS.WEIGHT_K;
 
-    velocity += totalAcceleration * dt;
-    position += velocity * dt;
+    const steps = Math.max(1, Math.ceil(dt / PHYS.MAX_SUBSTEP));
+    const h = dt / steps;
+    for (let i = 0; i < steps; i++) {
+      const force = d.output - weight - drag * velocity + wind;
+      velocity += (force / mass) * h;
+      position += velocity * h;
+
+      // Piso y techo del riel: el dron se apoya / se frena contra el límite
+      if (position > RANGE)  { position = RANGE;  velocity = Math.min(velocity, 0); }
+      if (position < -RANGE) { position = -RANGE; velocity = Math.max(velocity, 0); }
+    }
 
     if (!Number.isFinite(position)) position = 0; // ultimo recurso
     if (!Number.isFinite(velocity)) velocity = 0;
 
-    if (position > RANGE) { position = RANGE; velocity = 0; }
-    if (position < -RANGE) { position = -RANGE; velocity = 0; }
-
-    history.push({ t: (now - t0)/1000, position, target: d.target, output: d.output });
+    history.push({ t: (now - t0)/1000, position, target: d.target, output: d.output, lim: lastLimit });
     const cutoff = (now - t0)/1000 - HISTORY_SECONDS - 1;
     while (history.length && history[0].t < cutoff) history.shift();
 
